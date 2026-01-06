@@ -41,7 +41,7 @@ const calculateInvoicePaymentFlags = (invoice_status, payment_status) => {
   let to_be_paid = false;
   let paid = false;
 
-  const iStatus = invoice_status ;
+  const iStatus = invoice_status;
   const pStatus = payment_status || "Unpaid";
 
   if (iStatus === "Active" && pStatus === "Unpaid") {
@@ -191,6 +191,7 @@ export const createInvoice = async (req, res) => {
 
       await pool.query(
         `UPDATE estimates SET
+          ce_status = 'Completed',
           ce_invoice_status = 'received',
           to_be_invoiced = ?,
           invoice = ?,
@@ -298,21 +299,75 @@ export const createInvoiceFromEstimate = async (req, res) => {
 /* ======================================
    DELETE INVOICE
 ====================================== */
+// export const deleteInvoice = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+
+//     const [result] = await pool.query(
+//       "DELETE FROM invoices WHERE id = ?",
+//       [id]
+//     );
+
+//     if (result.affectedRows === 0) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Invoice not found"
+//       });
+//     }
+
+//     res.json({
+//       success: true,
+//       message: "Invoice deleted successfully"
+//     });
+
+//   } catch (error) {
+//     console.error("Delete Invoice Error:", error);
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
 export const deleteInvoice = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // 🔹 Get estimate_id before delete
+    const [[invoice]] = await pool.query(
+      `SELECT estimate_id FROM invoices WHERE id = ?`,
+      [id]
+    );
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: "Invoice not found"
+      });
+    }
 
     const [result] = await pool.query(
       "DELETE FROM invoices WHERE id = ?",
       [id]
     );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Invoice not found"
-      });
+    /* ================= ADD ONLY THIS ================= */
+    if (invoice.estimate_id) {
+      const [[countRow]] = await pool.query(
+        `SELECT COUNT(*) AS cnt FROM invoices WHERE estimate_id = ?`,
+        [invoice.estimate_id]
+      );
+
+      const hasInvoice = countRow.cnt > 0;
+
+      await pool.query(
+        `UPDATE estimates SET
+          ce_status = ?
+         WHERE id = ?`,
+        [
+          hasInvoice ? 'Completed' : 'Active',
+          invoice.estimate_id
+        ]
+      );
     }
+    /* ================= END ADD ================= */
 
     res.json({
       success: true,
@@ -496,13 +551,16 @@ export const getInvoicesByProjectId = async (req, res) => {
         i.*,
         p.project_name,
         p.project_no,
-        cs.name AS client_name
+        cs.name AS client_name,
+        po.po_number
       FROM invoices i
       LEFT JOIN projects p 
         ON p.id = i.project_id
       LEFT JOIN clients_suppliers cs 
         ON cs.id = i.client_id 
         AND cs.type = 'client'
+      LEFT JOIN purchase_orders po
+        ON po.id = i.purchase_order_id
       WHERE i.project_id = ?
       ORDER BY i.id DESC
     `, [projectId]);

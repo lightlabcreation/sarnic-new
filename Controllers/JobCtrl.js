@@ -192,6 +192,92 @@ export const getJobById = async (req, res) => {
   }
 };
 
+// export const getJobsByProjectId = async (req, res) => {
+//   try {
+//     const { projectId } = req.params;
+
+//     const [rows] = await pool.query(
+//       `
+//       SELECT
+//         j.*,
+//         p.project_no,
+//         p.project_name AS main_project_name,
+//         b.name AS brand_name,
+//         sb.name AS sub_brand_name,
+//         f.name AS flavour_name,
+//         pt.name AS pack_type_name,
+
+//         MAX(aj.id) AS assign_id,
+//         MAX(aj.production_status) AS production_status,
+//         MAX(aj.admin_status) AS admin_status,
+//         MAX(aj.employee_status) AS employee_status,
+
+//         MAX(pu.id) AS assigned_user_id,
+
+//         -- assigned name (production override)
+//         CASE
+//           WHEN MAX(aj.production_id) IS NOT NULL
+//             THEN CONCAT(MAX(prod.first_name), ' ', MAX(prod.last_name))
+//           ELSE CONCAT(MAX(pu.first_name), ' ', MAX(pu.last_name))
+//         END AS assigned_name,
+
+//         -- ✅ TOTAL TIME PER JOB (HH:MM, supports >24h)
+//         CONCAT(
+//           FLOOR(
+//             (
+//               COALESCE(SUM(TIME_TO_SEC(twl.time)), 0) +
+//               COALESCE(SUM(TIME_TO_SEC(twl.overtime)), 0)
+//             ) / 3600
+//           ),
+//           ':',
+//           LPAD(
+//             FLOOR(
+//               (
+//                 COALESCE(SUM(TIME_TO_SEC(twl.time)), 0) +
+//                 COALESCE(SUM(TIME_TO_SEC(twl.overtime)), 0)
+//               ) % 3600 / 60
+//             ),
+//             2,
+//             '0'
+//           )
+//         ) AS total_time
+
+//       FROM jobs j
+//       LEFT JOIN projects p ON j.project_id = p.id
+//       LEFT JOIN brand_names b ON j.brand_id = b.id
+//       LEFT JOIN sub_brands sb ON j.sub_brand_id = sb.id
+//       LEFT JOIN flavours f ON j.flavour_id = f.id
+//       LEFT JOIN pack_types pt ON j.pack_type_id = pt.id
+
+
+//       LEFT JOIN assign_jobs aj
+//         ON aj.id = (
+//           SELECT aj2.id
+//           FROM assign_jobs aj2
+//           WHERE JSON_CONTAINS(aj2.job_ids, JSON_ARRAY(j.id))
+//             AND aj2.project_id = j.project_id
+//           ORDER BY aj2.created_at DESC
+//           LIMIT 1
+//         )
+
+//       LEFT JOIN users pu ON pu.id = j.assigned
+//       LEFT JOIN users prod ON prod.id = aj.production_id
+
+//       -- 🆕 join time logs
+//       LEFT JOIN time_work_logs twl ON twl.job_id = j.id
+
+//       WHERE j.project_id = ?
+//       GROUP BY j.id
+//       ORDER BY j.id DESC
+//       `,
+//       [projectId]
+//     );
+
+//     res.json({ success: true, data: rows });
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
 export const getJobsByProjectId = async (req, res) => {
   try {
     const { projectId } = req.params;
@@ -214,12 +300,14 @@ export const getJobsByProjectId = async (req, res) => {
 
         MAX(pu.id) AS assigned_user_id,
 
-        -- assigned name (production override)
+        -- ✅ ASSIGNED NAME (ONLY FROM jobs.assigned)
         CASE
-          WHEN MAX(aj.production_id) IS NOT NULL
-            THEN CONCAT(MAX(prod.first_name), ' ', MAX(prod.last_name))
-          ELSE CONCAT(MAX(pu.first_name), ' ', MAX(pu.last_name))
-        END AS assigned_name,
+  WHEN j.assigned IS NULL
+       OR j.assigned = ''
+       OR j.assigned = 'Not Assigned'
+    THEN 'Not Assigned'
+  ELSE CONCAT(pu.first_name, ' ', pu.last_name)
+END AS assigned_name,
 
         -- ✅ TOTAL TIME PER JOB (HH:MM, supports >24h)
         CONCAT(
@@ -249,7 +337,6 @@ export const getJobsByProjectId = async (req, res) => {
       LEFT JOIN flavours f ON j.flavour_id = f.id
       LEFT JOIN pack_types pt ON j.pack_type_id = pt.id
 
-
       LEFT JOIN assign_jobs aj
         ON aj.id = (
           SELECT aj2.id
@@ -261,9 +348,6 @@ export const getJobsByProjectId = async (req, res) => {
         )
 
       LEFT JOIN users pu ON pu.id = j.assigned
-      LEFT JOIN users prod ON prod.id = aj.production_id
-
-      -- 🆕 join time logs
       LEFT JOIN time_work_logs twl ON twl.job_id = j.id
 
       WHERE j.project_id = ?

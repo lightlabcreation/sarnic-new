@@ -106,10 +106,17 @@ export const getAllTimeLogs = async (req, res) => {
     `);
 
     // 🔥 RESPONSE TRANSFORMATION LOGIC
-    const formattedData = [];
+    const formattedData = rows.map(row => {
+      // 🔥 Priority logic (NO DUPLICATION)
+      let displayName = null;
 
-    rows.forEach((row) => {
-      const base = {
+      if (row.employee_id && row.employee_name) {
+        displayName = row.employee_name;
+      } else if (row.production_id && row.production_name) {
+        displayName = row.production_name;
+      }
+
+      return {
         id: row.id,
         date: row.date,
         employee_id: row.employee_id,
@@ -125,23 +132,8 @@ export const getAllTimeLogs = async (req, res) => {
         project_name: row.project_name,
         assign_status: row.assign_status,
         total_time: row.total_time,
+        employee_name: displayName
       };
-
-      // ✅ If employee exists → create object
-      if (row.employee_id && row.employee_name) {
-        formattedData.push({
-          ...base,
-          employee_name: row.employee_name,
-        });
-      }
-
-      // ✅ If production exists → create object
-      if (row.production_id && row.production_name) {
-        formattedData.push({
-          ...base,
-          employee_name: row.production_name,
-        });
-      }
     });
 
     res.json({ success: true, data: formattedData });
