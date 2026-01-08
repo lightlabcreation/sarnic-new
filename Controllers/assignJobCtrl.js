@@ -27,7 +27,7 @@ export const createAssignJob = async (req, res) => {
     let admin_status = "in_progress";
     let production_status = "not_applicable";
     let employee_status = "not_applicable";
-    let assignedLabel = "Not Assigned";
+    let assignedLabel = "Unassigned";
 
     // -----------------------------
     // Assignment logic (UNCHANGED)
@@ -269,7 +269,7 @@ export const employeeRejectJob = async (req, res) => {
       UPDATE jobs
       SET 
         job_status = 'reject',
-        assigned = 'Not Assigned'
+        assigned = 'Unassigned'
       WHERE id = ?
       `,
       [job_id]
@@ -348,7 +348,7 @@ export const productionCompleteJob = async (req, res) => {
       UPDATE jobs
       SET 
         job_status = 'complete',
-        assigned = 'Not Assigned'
+        assigned = 'Unassigned'
       WHERE id IN (?)
       `,
       [jobIds]
@@ -450,7 +450,7 @@ export const productionReturnJob = async (req, res) => {
         `
         UPDATE jobs
         SET 
-          assigned = 'Not Assigned',
+          assigned = 'Unassigned',
           job_status = 'complete'
         WHERE id IN (${jobPlaceholders})
         `,
@@ -529,7 +529,7 @@ export const productionReturnJobStatus = async (req, res) => {
     if (allJobIds.length > 0) {
       const jobPlaceholders = allJobIds.map(() => "?").join(",");
       await connection.query(
-        `UPDATE jobs SET job_status = 'return', assigned = 'Not Assigned' WHERE id IN (${jobPlaceholders})`,
+        `UPDATE jobs SET job_status = 'return', assigned = 'Unassigned' WHERE id IN (${jobPlaceholders})`,
         allJobIds
       );
     }
@@ -628,7 +628,7 @@ export const productionRejectJob = async (req, res) => {
         `
         UPDATE jobs
         SET 
-          assigned = 'Not Assigned',
+          assigned = 'Unassigned',
           job_status = 'reject'
         WHERE id IN (${jobPlaceholders})
         `,

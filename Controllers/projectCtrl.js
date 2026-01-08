@@ -377,18 +377,18 @@ export const getProjectOverviewById = async (req, res) => {
     // Pick first currency if multiple currencies exist for backward compatibility
     let purchase_orders = {
       total_pos: Number(poStats.total_pos) || 0,
-      received: 0,
+      received: Number(poStats.total_pos) || 0,
       issued: 0,
       total_value: Number(poStats.total_value || 0).toFixed(2),
       currency: "USD",
     };
-    if (invoiceStats.length > 0) {
-      const inv = invoiceStats[0];
-      purchase_orders = {
-        received: Number(inv.received) || 0,
-        issued: Number(inv.issued) || 0,
-      };
-    }
+    // if (invoiceStats.length > 0) {
+    //   const inv = invoiceStats[0];
+    //   purchase_orders = {
+    //     received: Number(inv.received) || 0,
+    //     issued: Number(inv.issued) || 0,
+    //   };
+    // }
     const recentActivity = [...recentJobs, ...recentPOs]
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
       .slice(0, 3);

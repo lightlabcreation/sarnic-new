@@ -278,6 +278,7 @@ export const getJobById = async (req, res) => {
 //     res.status(500).json({ message: error.message });
 //   }
 // };
+
 export const getJobsByProjectId = async (req, res) => {
   try {
     const { projectId } = req.params;
@@ -304,8 +305,8 @@ export const getJobsByProjectId = async (req, res) => {
         CASE
   WHEN j.assigned IS NULL
        OR j.assigned = ''
-       OR j.assigned = 'Not Assigned'
-    THEN 'Not Assigned'
+       OR j.assigned = 'Unassigned'
+    THEN 'Unassigned'
   ELSE CONCAT(pu.first_name, ' ', pu.last_name)
 END AS assigned_name,
 
@@ -512,7 +513,7 @@ export const getJobHistoryByProductionId = async (req, res) => {
         COALESCE(
           CONCAT(emp.first_name, ' ', emp.last_name),
           CONCAT(prod.first_name, ' ', prod.last_name),
-          'Not Assigned'
+          'Unassigned'
         )                                      AS assignedTo,
 
         aj.time_budget                         AS totalTime,

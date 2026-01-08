@@ -58,6 +58,168 @@ const calculateInvoicePaymentFlags = (invoice_status, payment_status) => {
 /* ======================================
    CREATE INVOICE (FINAL)
 ====================================== */
+// export const createInvoice = async (req, res) => {
+//   try {
+//     const {
+//       client_id,
+//       project_id,
+//       estimate_id,          // 🔥 MUST come from frontend
+//       purchase_order_id,
+//       invoice_date,
+//       due_date,
+//       currency,
+//       document_type,
+//       invoice_status,
+//       payment_status,
+//       vat_rate,
+//       notes,
+//       line_items
+//     } = req.body;
+
+//     /* ================= VALIDATION ================= */
+//     if (!client_id || !invoice_date || !currency) {
+//       return res.status(400).json({ message: "Required fields missing" });
+//     }
+
+//     if (!Array.isArray(line_items) || line_items.length === 0) {
+//       return res.status(400).json({ message: "Line items required" });
+//     }
+
+//     /* ================= INVOICE NUMBER ================= */
+//     const [[row]] = await pool.query(
+//       "SELECT MAX(invoice_no) AS maxNo FROM invoices"
+//     );
+//     const invoiceNo = (row.maxNo || 5000) + 1;
+
+//     /* ================= CALCULATE TOTALS ================= */
+//     let subtotal = 0;
+
+//     const parsedItems = line_items.map(item => {
+//       const rate = parseAmountByCurrency(item.rate, currency);
+//       const qty = Number(item.quantity);
+
+//       if (isNaN(qty) || qty <= 0) {
+//         throw new Error("Invalid quantity");
+//       }
+
+//       const amount = rate * qty;
+//       subtotal += amount;
+
+//       return {
+//         description: item.description,
+//         quantity: qty,
+//         rate,
+//         amount
+//       };
+//     });
+
+//     const vatAmount = (subtotal * (vat_rate || 0)) / 100;
+//     const totalAmount = subtotal + vatAmount;
+
+//     /* ================= PAYMENT FLAGS ================= */
+//     const paymentFlags = calculateInvoicePaymentFlags(
+//       invoice_status,
+//       payment_status
+//     );
+
+//     /* ================= CREATE INVOICE ================= */
+//     const [result] = await pool.query(
+//       `INSERT INTO invoices (
+//         invoice_no,
+//         client_id,
+//         project_id,
+//         estimate_id,
+//         purchase_order_id,
+//         invoice_date,
+//         due_date,
+//         currency,
+//         document_type,
+//         invoice_status,
+//         payment_status,
+//         to_be_paid,
+//         paid,
+//         line_items,
+//         vat_rate,
+//         subtotal,
+//         vat_amount,
+//         total_amount,
+//         notes
+//       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+//       [
+//         invoiceNo,
+//         client_id,
+//         project_id || null,
+//         estimate_id || null,
+//         purchase_order_id || null,
+//         invoice_date,
+//         due_date || null,
+//         currency,
+//         document_type || "Tax Invoice",
+//         invoice_status,
+//         payment_status || "Unpaid",
+//         paymentFlags.to_be_paid,
+//         paymentFlags.paid,
+//         JSON.stringify(parsedItems),
+//         vat_rate || 0,
+//         subtotal,
+//         vatAmount,
+//         totalAmount,
+//         notes || null
+//       ]
+//     );
+
+//     /* ================= UPDATE COST ESTIMATE STATUS ================= */
+//     if (estimate_id) {
+//       // Fetch current PO status of estimate
+//       const [[estimate]] = await pool.query(
+//         `SELECT ce_po_status FROM estimates WHERE id = ?`,
+//         [estimate_id]
+//       );
+
+//       if (!estimate) {
+//         return res.status(404).json({
+//           message: "Linked cost estimate not found"
+//         });
+//       }
+
+//       const ce_po_status = estimate.ce_po_status || "pending";
+
+//       // Invoice created => invoice received
+//       let to_be_invoiced = false;
+//       let invoice = false;
+//       let invoiced = true;
+
+//       await pool.query(
+//         `UPDATE estimates SET
+//           ce_status = 'Completed',
+//           ce_invoice_status = 'received',
+//           to_be_invoiced = ?,
+//           invoice = ?,
+//           invoiced = ?
+//          WHERE id = ?`,
+//         [
+//           to_be_invoiced,
+//           invoice,
+//           invoiced,
+//           estimate_id
+//         ]
+//       );
+//     }
+
+//     /* ================= RESPONSE ================= */
+//     res.status(201).json({
+//       success: true,
+//       message: "Invoice created & cost estimate updated successfully",
+//       id: result.insertId,
+//       invoice_no: invoiceNo,
+//       payment_flags: paymentFlags
+//     });
+
+//   } catch (error) {
+//     console.error("Create Invoice Error:", error);
+//     res.status(500).json({ message: error.message });
+//   }
+// };
 export const createInvoice = async (req, res) => {
   try {
     const {
@@ -83,6 +245,20 @@ export const createInvoice = async (req, res) => {
 
     if (!Array.isArray(line_items) || line_items.length === 0) {
       return res.status(400).json({ message: "Line items required" });
+    }
+
+    /* ================= CHECK DUPLICATE PO INVOICE ================= */
+    if (purchase_order_id) {
+      const [[existingInvoice]] = await pool.query(
+        `SELECT id FROM invoices WHERE purchase_order_id = ? LIMIT 1`,
+        [purchase_order_id]
+      );
+
+      if (existingInvoice) {
+        return res.status(400).json({
+          message: "Invoice already exists for this Cost Estimate"
+        });
+      }
     }
 
     /* ================= INVOICE NUMBER ================= */
@@ -170,7 +346,6 @@ export const createInvoice = async (req, res) => {
 
     /* ================= UPDATE COST ESTIMATE STATUS ================= */
     if (estimate_id) {
-      // Fetch current PO status of estimate
       const [[estimate]] = await pool.query(
         `SELECT ce_po_status FROM estimates WHERE id = ?`,
         [estimate_id]
@@ -184,7 +359,6 @@ export const createInvoice = async (req, res) => {
 
       const ce_po_status = estimate.ce_po_status || "pending";
 
-      // Invoice created => invoice received
       let to_be_invoiced = false;
       let invoice = false;
       let invoiced = true;
@@ -536,8 +710,6 @@ export const getInvoiceById = async (req, res) => {
 //     res.status(500).json({ success: false, message: error.message });
 //   }
 // };
-
-
 export const getInvoicepdfById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -556,6 +728,7 @@ export const getInvoicepdfById = async (req, res) => {
         i.total_amount,
 
         p.project_no,
+        p.project_name,
 
         cs.name AS client_name,
         cs.address AS client_address,
@@ -581,7 +754,7 @@ export const getInvoicepdfById = async (req, res) => {
         es.estimate_no AS ce_no,
 
         -- ✅ PO INFO (FIX)
-        po.po_number AS po_no
+        REPLACE(po.po_number, 'PO-', '') AS po_no
 
       FROM invoices i
 
@@ -620,6 +793,7 @@ export const getInvoicepdfById = async (req, res) => {
 
         // ✅ NOW CORRECT PO NUMBER
         po_no: row.po_no,
+        project_name: row.project_name,
 
         project_no: row.project_no,
         currency: row.currency,
@@ -664,8 +838,6 @@ export const getInvoicepdfById = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
-
 
 
 /* ======================================
