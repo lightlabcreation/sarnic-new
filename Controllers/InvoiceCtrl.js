@@ -247,7 +247,7 @@ export const createInvoice = async (req, res) => {
       return res.status(400).json({ message: "Line items required" });
     }
 
-    /* ================= CHECK DUPLICATE PO INVOICE ================= */
+    /* ================= CHECK DUPLICATE PO/ESTIMATE INVOICE ================= */
     if (purchase_order_id) {
       const [[existingInvoice]] = await pool.query(
         `SELECT id FROM invoices WHERE purchase_order_id = ? LIMIT 1`,
@@ -255,6 +255,19 @@ export const createInvoice = async (req, res) => {
       );
 
       if (existingInvoice) {
+        return res.status(400).json({
+          message: "Invoice already exists for this Cost Estimate"
+        });
+      }
+    }
+
+    if (estimate_id) {
+      const [[existingEstInvoice]] = await pool.query(
+        `SELECT id FROM invoices WHERE estimate_id = ? LIMIT 1`,
+        [estimate_id]
+      );
+
+      if (existingEstInvoice) {
         return res.status(400).json({
           message: "Invoice already exists for this Cost Estimate"
         });
@@ -407,13 +420,18 @@ export const getAllInvoices = async (req, res) => {
         p.project_name,
         p.project_no,
         cs.name AS client_name,
-        po.po_number
+        COALESCE(po.po_number, po_est.po_number) AS po_number,
+        es.estimate_no AS ce_no
       FROM invoices i
       LEFT JOIN projects p ON p.id = i.project_id
       LEFT JOIN clients_suppliers cs 
         ON cs.id = i.client_id AND cs.type = 'client'
-           LEFT JOIN purchase_orders po
+      LEFT JOIN purchase_orders po
         ON po.id = i.purchase_order_id
+      LEFT JOIN estimates es
+        ON es.id = i.estimate_id
+      LEFT JOIN purchase_orders po_est
+        ON po_est.cost_estimation_id = i.estimate_id
       ORDER BY i.id DESC
     `);
 
@@ -853,7 +871,8 @@ export const getInvoicesByProjectId = async (req, res) => {
         p.project_name,
         p.project_no,
         cs.name AS client_name,
-        po.po_number
+        COALESCE(po.po_number, po_est.po_number) AS po_number,
+        es.estimate_no AS ce_no
       FROM invoices i
       LEFT JOIN projects p 
         ON p.id = i.project_id
@@ -862,6 +881,10 @@ export const getInvoicesByProjectId = async (req, res) => {
         AND cs.type = 'client'
       LEFT JOIN purchase_orders po
         ON po.id = i.purchase_order_id
+      LEFT JOIN estimates es
+        ON es.id = i.estimate_id
+      LEFT JOIN purchase_orders po_est
+        ON po_est.cost_estimation_id = i.estimate_id
       WHERE i.project_id = ?
       ORDER BY i.id DESC
     `, [projectId]);

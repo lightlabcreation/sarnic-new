@@ -540,123 +540,183 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
       params
     );
 
-    if (rows.length === 0 && employeeId) {
-      /* ---------- PRODUCTION ---------- */
-      if (userRole === "production") {
-        const [[production]] = await pool.query(
-          `
-          SELECT 
-            u.id AS production_id,
-            CONCAT(u.first_name, ' ', u.last_name) AS production_name,
-            aj.time_budget,
-            aj.task_description,
-            aj.created_at
-          FROM users u
-          LEFT JOIN assign_jobs aj
-            ON aj.production_id = u.id
-            AND FIND_IN_SET(
-              ?, REPLACE(REPLACE(aj.job_ids,'[',''),']','')
-            )
-          WHERE u.id = ?
-          ORDER BY aj.created_at DESC
-          LIMIT 1
-          `,
-          [jobId, employeeId]
-        );
+    /* ----------------------------------------------------
+       🔥 FETCH LATEST ASSIGNMENT (PENDING CHECK)
+    ---------------------------------------------------- */
+    let latestAssignment = null;
+    if (employeeId) {
+      // Logic: Find the ABSOLUTE LATEST assignment for this user/job
+      const [[assign]] = await pool.query(
+        `
+        SELECT 
+          aj.*,
+          CONCAT(u.first_name, ' ', u.last_name) AS user_name,
+          CONCAT(emp.first_name, ' ', emp.last_name) AS assigned_employee_name
+        FROM assign_jobs aj
+        LEFT JOIN users u ON u.id = ?
+        LEFT JOIN users emp ON emp.id = aj.employee_id
+        WHERE FIND_IN_SET(
+          ?, REPLACE(REPLACE(aj.job_ids, '[', ''), ']', '')
+        )
+        AND (
+          aj.employee_id = ? OR aj.production_id = ?
+        )
+        ORDER BY aj.created_at DESC
+        LIMIT 1
+        `,
+        [employeeId, jobId, employeeId, employeeId]
+      );
+      latestAssignment = assign;
+    }
 
-        return res.json({
-          success: true,
-          production: {
-            production_id: production?.production_id || employeeId,
-            production_name: production?.production_name || null,
-            time_budget: production?.time_budget || "00:00:00",
-            task_description: production?.task_description || null,
-            created_at: production?.created_at || null,
-          },
-          logs: [],
-        });
-      }
+    // 🔥 INJECT PENDING LOG IF NEEDED
+    let injectedRows = [...rows];
 
-      /* ---------- EMPLOYEE ---------- */
-      if (userRole === "employee") {
-        const [[employee]] = await pool.query(
-          `
-          SELECT 
-            u.id AS employee_id,
-            CONCAT(u.first_name, ' ', u.last_name) AS employee_name,
-            aj.time_budget,
-            aj.task_description,
-            aj.created_at
-          FROM users u
-          LEFT JOIN assign_jobs aj
-            ON aj.employee_id = u.id
-            AND FIND_IN_SET(
-              ?, REPLACE(REPLACE(aj.job_ids,'[',''),']','')
-            )
-          WHERE u.id = ?
-          ORDER BY aj.created_at DESC
-          LIMIT 1
-          `,
-          [jobId, employeeId]
-        );
+    if (latestAssignment) {
+      // Check if we already have a log that matches the CONTENT of this assignment
+      // Since assignments might be UPDATED in place (keeping same created_at),
+      // we must check if the current task_description has been logged.
 
-        return res.json({
-          success: true,
-          employee: {
-            employee_id: employee?.employee_id || employeeId,
-            employee_name: employee?.employee_name || null,
-            time_budget: employee?.time_budget || "00:00:00",
-            task_description: employee?.task_description || null,
-            created_at: employee?.created_at || null,
-          },
-          logs: [],
-        });
+      const isAssignmentLogged = rows.some(row => {
+        // We check if the snapshot description in the log matches the current assignment 
+        return row.task_description_snapshot === latestAssignment.task_description;
+      });
+
+      // If NO log exists with this specific description, inject it as a "Pending Instruction"
+      if (!isAssignmentLogged) {
+        // Construct virtual log
+        const virtualLog = {
+          id: `pending_${latestAssignment.id}_${Date.now()}`, // unique ID for frontend key
+          date: latestAssignment.created_at, // Use assignment date
+          task_description: latestAssignment.task_description, // The NEW description
+          time_budget: latestAssignment.time_budget,
+
+          employee_name: latestAssignment.assigned_employee_name || latestAssignment.user_name || "Unknown",
+          production_name: latestAssignment.user_name || "Unknown",
+
+          time: "00:00:00",
+          overtime: "00:00:00",
+          total_time: "00:00:00",
+
+          is_pending: true,
+          JobID: null,
+          assigned_employee_name: latestAssignment.assigned_employee_name, // Explicitly pass for frontend check
+          assign_status: "assigned"
+        };
+
+        injectedRows.unshift(virtualLog);
       }
     }
 
-    if ((!employeeId || userRole === "admin") && rows.length === 0) {
-      const [assignments] = await pool.query(
+    /* ----------------------------------------------------
+       RESPONSE MAPPING
+    ---------------------------------------------------- */
+
+    if (userRole === "production" || userRole === "employee") {
+      // Use latestAssignment for metadata if available, else fallback to rows
+      const metaSource = latestAssignment || injectedRows[0] || {};
+
+      const userObj = {
+        [userRole === "production" ? "production_id" : "employee_id"]: employeeId,
+        [userRole === "production" ? "production_name" : "employee_name"]: metaSource.user_name || metaSource.production_name || metaSource.employee_name,
+        assigned_employee_name: metaSource.assigned_employee_name || null,
+        time_budget: metaSource.time_budget || "00:00:00",
+        task_description: metaSource.task_description || null,
+        created_at: metaSource.created_at || null
+      };
+
+      return res.json({
+        success: true,
+        [userRole]: userObj,
+        logs: injectedRows
+      });
+    }
+
+    // ADMIN VIEW (Grouping)
+    if (!employeeId || userRole === "admin") {
+
+      // 1. Fetch ALL active assignments for this job to check for pending items
+      const [allAssignments] = await pool.query(
         `
         SELECT 
-          aj.production_id,
-          CONCAT(u.first_name, ' ', u.last_name) AS production_name,
-          aj.time_budget,
-          aj.task_description,
-          aj.created_at
+          aj.*,
+          CONCAT(u.first_name, ' ', u.last_name) AS user_name,
+          CONCAT(prod.first_name, ' ', prod.last_name) AS production_user_name
         FROM assign_jobs aj
-        LEFT JOIN users u ON u.id = aj.production_id
+        LEFT JOIN users u ON u.id = aj.employee_id
+        LEFT JOIN users prod ON prod.id = aj.production_id
         WHERE FIND_IN_SET(
-          ?, REPLACE(REPLACE(aj.job_ids,'[',''),']','')
+          ?, REPLACE(REPLACE(aj.job_ids, '[', ''), ']', '')
         )
+        -- We want the latest assignment per user/production
+        -- This simple query gets all; we'll filter for latest in JS or use a complex group-wise max query.
+        -- Given volume, JS filtering is acceptable.
         ORDER BY aj.created_at DESC
         `,
         [jobId]
       );
 
-      return res.json({
-        success: true,
-        job_id: jobId,
-        productions: assignments.map((a) => ({
-          production_id: a.production_id,
-          production_name: a.production_name,
-          time_budget: a.time_budget || "00:00:00",
-          task_description: a.task_description || null,
-          created_at: a.created_at || null,
-          logs: [],
-        })),
+      // Filter to get unique latest assignment per assignee (production/employee)
+      const latestAssignmentsMap = {};
+      allAssignments.forEach(assign => {
+        const key = assign.employee_id ? `emp_${assign.employee_id}` : `prod_${assign.production_id}`;
+        if (!latestAssignmentsMap[key]) {
+          latestAssignmentsMap[key] = assign;
+        }
       });
-    }
 
-    // ADMIN
-    if (!employeeId || userRole === "admin") {
+      // Inject pending logs into the injectedRows array
+      Object.values(latestAssignmentsMap).forEach(latestAssign => {
+        const isLogged = injectedRows.some(row => {
+          // Match assignee
+          const sameAssignee = (latestAssign.employee_id && row.employee_id === latestAssign.employee_id) ||
+            (latestAssign.production_id && row.production_id === latestAssign.production_id);
+          if (!sameAssignee) return false;
+
+          // Match content
+          return row.task_description_snapshot === latestAssign.task_description;
+        });
+
+        if (!isLogged) {
+          const assigneeName = latestAssign.employee_id ? latestAssign.user_name : latestAssign.production_user_name;
+          const virtualLog = {
+            id: `pending_${latestAssign.id}_${Date.now()}_${Math.random()}`,
+            date: latestAssign.created_at,
+            task_description: latestAssign.task_description,
+            time_budget: latestAssign.time_budget,
+
+            employee_name: latestAssign.employee_id ? assigneeName : null,
+            production_name: latestAssign.production_id ? assigneeName : null,
+
+            employee_id: latestAssign.employee_id,
+            production_id: latestAssign.production_id,
+
+            time: "00:00:00",
+            overtime: "00:00:00",
+            total_time: "00:00:00",
+
+            is_pending: true,
+            JobID: null,
+            assign_status: "assigned"
+          };
+          injectedRows.unshift(virtualLog);
+        }
+      });
+
       const productionsMap = {};
 
-      rows.forEach((row) => {
-        const prodId = row.production_id || "unassigned";
+      injectedRows.forEach((row) => {
+        // Grouping key: preference to production_id, else employee_id (fallback)
+        // actually existing logic grouped by production_id. 
+        // If an employee is working directly (no production?), we might drop them if we only use production_id.
+        // Let's stick to user's existing structure but handle the "unassigned" case better.
+
+        const prodId = row.production_id || `emp_direct_${row.employee_id}` || "unassigned";
+
         if (!productionsMap[prodId]) {
           productionsMap[prodId] = {
             production_id: row.production_id,
-            production_name: row.production_name,
+            production_name: row.production_name || row.employee_name, // Fallback name
             time_budget: row.time_budget || "00:00:00",
             task_description: row.task_description || null,
             task_created_at: row.task_created_at || null,
@@ -674,35 +734,8 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
       });
     }
 
-    if (userRole === "production") {
-      return res.json({
-        success: true,
-        production: {
-          production_id: employeeId,
-          production_name: rows[0]?.production_name || null,
-          time_budget: rows[0]?.time_budget || "00:00:00",
-          task_description: rows[0]?.task_description || null,
-          task_created_at: rows[0]?.task_created_at || null,
-        },
-        logs: rows,
-      });
-    }
+    return res.json({ success: true, data: injectedRows });
 
-    if (userRole === "employee") {
-      return res.json({
-        success: true,
-        employee: {
-          employee_id: employeeId,
-          employee_name: rows[0]?.employee_name || null,
-          time_budget: rows[0]?.time_budget || "00:00:00",
-          task_description: rows[0]?.task_description || null,
-          task_created_at: rows[0]?.task_created_at || null,
-        },
-        logs: rows,
-      });
-    }
-
-    return res.json({ success: true, data: rows });
   } catch (error) {
     console.error("Time log error:", error);
     res.status(500).json({
