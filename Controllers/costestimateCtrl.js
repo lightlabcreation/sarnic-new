@@ -483,9 +483,94 @@ export const updateEstimate = async (req, res) => {
       ]
     );
 
+    console.log(`🔍 Cost Estimate ${id} updated. Total Amount: ${totalAmount}`);
+    
+    // 🔄 SYNC AMOUNT TO PURCHASE ORDERS (all POs linked to this estimate)
+    let poSynced = false;
+    try {
+      const [linkedPOs] = await pool.query(
+        `SELECT id, po_amount FROM purchase_orders WHERE cost_estimation_id = ?`,
+        [id]
+      );
+      
+      if (linkedPOs && linkedPOs.length > 0) {
+        console.log(`📋 Found ${linkedPOs.length} PO(s) linked to Cost Estimate ${id}`);
+        
+        for (const po of linkedPOs) {
+          try {
+            await pool.query(
+              `UPDATE purchase_orders SET po_amount = ? WHERE id = ?`,
+              [totalAmount, po.id]
+            );
+            console.log(`✅ PO ${po.id} updated with amount: ${totalAmount}`);
+            poSynced = true;
+          } catch (poError) {
+            console.error(`❌ Error updating PO ${po.id}:`, poError);
+          }
+        }
+      } else {
+        console.log(`⚠️ No PO found for Cost Estimate ${id}`);
+      }
+    } catch (poSyncError) {
+      console.error("❌ Error syncing POs:", poSyncError);
+    }
+
+    // 🔄 SYNC AMOUNT TO INVOICES (all invoices linked to this estimate)
+    let invoiceSynced = false;
+    try {
+      const [linkedInvoices] = await pool.query(
+        `SELECT id, total_amount FROM invoices WHERE estimate_id = ?`,
+        [id]
+      );
+      
+      if (linkedInvoices && linkedInvoices.length > 0) {
+        console.log(`📋 Found ${linkedInvoices.length} Invoice(s) linked to Cost Estimate ${id}`);
+        
+        for (const inv of linkedInvoices) {
+          try {
+            // Recalculate invoice amounts based on new estimate data
+            await pool.query(
+              `UPDATE invoices SET
+                subtotal = ?,
+                vat_amount = ?,
+                total_amount = ?,
+                line_items = ?,
+                vat_rate = ?
+              WHERE id = ?`,
+              [
+                subtotal,
+                vatAmount,
+                totalAmount,
+                JSON.stringify(parsedItems),
+                vat_rate || 0,
+                inv.id
+              ]
+            );
+            console.log(`✅ Invoice ${inv.id} updated with amount: ${totalAmount}`);
+            invoiceSynced = true;
+          } catch (invError) {
+            console.error(`❌ Error updating Invoice ${inv.id}:`, invError);
+          }
+        }
+      } else {
+        console.log(`⚠️ No Invoice found for Cost Estimate ${id}`);
+      }
+    } catch (invSyncError) {
+      console.error("❌ Error syncing Invoices:", invSyncError);
+    }
+
+    // Build response message
+    let syncMessage = "Estimate updated successfully.";
+    if (poSynced) {
+      syncMessage += " PO(s) amount synced.";
+    }
+    if (invoiceSynced) {
+      syncMessage += " Invoice(s) amount synced.";
+    }
+
     res.json({
       success: true,
-      message: "Estimate updated successfully",
+      message: syncMessage,
       status_flags: statusFlags
     });
 
@@ -528,3 +613,62 @@ export const deleteEstimate = async (req, res) => {
   }
 };
 
+export const duplicateEstimate = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [[estimate]] = await pool.query(`SELECT * FROM estimates WHERE id = ?`, [id]);
+    if (!estimate) {
+      return res.status(404).json({ success: false, message: "Estimate not found" });
+    }
+
+    const [[row]] = await pool.query("SELECT MAX(estimate_no) AS maxNo FROM estimates");
+    const nextEstimateNo = (row.maxNo || 6607) + 1;
+
+    // When duplicating, we keep the same financials and line items, but reset workflow flags.
+    const ce_po_status = "pending";
+    const ce_invoice_status = "pending";
+    const statusFlags = calculateInvoiceFlags(ce_po_status, ce_invoice_status);
+
+    const [result] = await pool.query(
+      `INSERT INTO estimates (
+        estimate_no, client_id, project_id,
+        estimate_date, valid_until, currency,
+        ce_status, ce_po_status, ce_invoice_status,
+        to_be_invoiced, invoice, invoiced,
+        line_items, vat_rate, subtotal,
+        vat_amount, total_amount, notes
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        nextEstimateNo,
+        estimate.client_id,
+        estimate.project_id || null,
+        estimate.estimate_date,
+        estimate.valid_until || null,
+        estimate.currency,
+        estimate.ce_status || "Draft",
+        ce_po_status,
+        ce_invoice_status,
+        statusFlags.to_be_invoiced,
+        statusFlags.invoice,
+        statusFlags.invoiced,
+        estimate.line_items, // already JSON string in DB
+        estimate.vat_rate || 0,
+        estimate.subtotal || 0,
+        estimate.vat_amount || 0,
+        estimate.total_amount || 0,
+        estimate.notes || null
+      ]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: "Estimate duplicated successfully",
+      id: result.insertId,
+      estimate_no: nextEstimateNo
+    });
+  } catch (error) {
+    console.error("Duplicate Estimate Error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

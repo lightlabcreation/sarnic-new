@@ -961,6 +961,20 @@ export const updateInvoice = async (req, res) => {
       payment_status
     );
 
+    // First, get the invoice to check linked PO and Estimate
+    const [[invoice]] = await pool.query(
+      `SELECT estimate_id, purchase_order_id FROM invoices WHERE id = ?`,
+      [id]
+    );
+
+    if (!invoice) {
+      return res.status(404).json({ message: "Invoice not found" });
+    }
+
+    console.log(`📋 Invoice ${id} - PO ID: ${invoice.purchase_order_id}, Estimate ID: ${invoice.estimate_id}`);
+    console.log(`💰 New Invoice Amount: ${totalAmount}`);
+
+    // Update Invoice
     await pool.query(
       `UPDATE invoices SET
         invoice_date = ?,
@@ -997,9 +1011,125 @@ export const updateInvoice = async (req, res) => {
       ]
     );
 
+    // 🔄 SYNC AMOUNT TO PURCHASE ORDER (if linked)
+    let poIdsToUpdate = [];
+    let poSynced = false;
+    
+    console.log(`🔍 Invoice ${id} - PO ID: ${invoice.purchase_order_id}, Estimate ID: ${invoice.estimate_id}`);
+    console.log(`💰 Invoice Total Amount: ${totalAmount}`);
+    
+    // Case 1: Direct PO link in invoice
+    if (invoice.purchase_order_id) {
+      poIdsToUpdate.push(invoice.purchase_order_id);
+      console.log(`✅ Found direct PO link: ${invoice.purchase_order_id}`);
+    }
+    
+    // Case 2: Find PO via Cost Estimate (always check this, even if direct link exists)
+    if (invoice.estimate_id) {
+      const [linkedPOs] = await pool.query(
+        `SELECT id, po_amount FROM purchase_orders WHERE cost_estimation_id = ?`,
+        [invoice.estimate_id]
+      );
+      if (linkedPOs && linkedPOs.length > 0) {
+        linkedPOs.forEach(po => {
+          if (!poIdsToUpdate.includes(po.id)) {
+            poIdsToUpdate.push(po.id);
+            console.log(`🔗 Found PO ${po.id} linked via Cost Estimate ${invoice.estimate_id}`);
+            console.log(`📊 Current PO Amount: ${po.po_amount}, New Amount: ${totalAmount}`);
+          }
+        });
+      } else {
+        console.log(`⚠️ No PO found for Cost Estimate ${invoice.estimate_id}`);
+      }
+    }
+
+    // Update ALL found POs
+    if (poIdsToUpdate.length > 0) {
+      for (const poId of poIdsToUpdate) {
+        try {
+          // Verify PO exists before updating
+          const [[poCheck]] = await pool.query(
+            `SELECT id, po_amount FROM purchase_orders WHERE id = ?`,
+            [poId]
+          );
+          
+          if (!poCheck) {
+            console.error(`❌ PO ${poId} not found in database!`);
+            continue;
+          }
+          
+          console.log(`📋 PO ${poId} exists. Current amount: ${poCheck.po_amount}, Updating to: ${totalAmount}`);
+          
+          // Update PO
+          await pool.query(
+            `UPDATE purchase_orders SET po_amount = ? WHERE id = ?`,
+            [totalAmount, poId]
+          );
+          
+          // Verify update
+          const [[poVerify]] = await pool.query(
+            `SELECT po_amount FROM purchase_orders WHERE id = ?`,
+            [poId]
+          );
+          
+          // Compare amounts (handle float precision)
+          const expectedAmount = parseFloat(totalAmount);
+          const actualAmount = parseFloat(poVerify?.po_amount || 0);
+          
+          if (poVerify && Math.abs(expectedAmount - actualAmount) < 0.01) {
+            console.log(`✅ PO ${poId} successfully updated! New amount: ${poVerify.po_amount}`);
+            poSynced = true;
+          } else {
+            console.error(`❌ PO ${poId} update failed! Expected: ${totalAmount} (${expectedAmount}), Got: ${poVerify?.po_amount} (${actualAmount})`);
+          }
+        } catch (poError) {
+          console.error(`❌ Error updating PO ${poId}:`, poError);
+          // Continue with other POs
+        }
+      }
+    } else {
+      console.log(`⚠️ No PO found to sync for invoice ${id}`);
+    }
+
+    // 🔄 SYNC AMOUNT TO COST ESTIMATE (if linked)
+    if (invoice.estimate_id) {
+      try {
+        await pool.query(
+          `UPDATE estimates SET
+            subtotal = ?,
+            vat_amount = ?,
+            total_amount = ?,
+            line_items = ?,
+            vat_rate = ?
+          WHERE id = ?`,
+          [
+            subtotal,
+            vatAmount,
+            totalAmount,
+            JSON.stringify(parsedItems),
+            vat_rate || 0,
+            invoice.estimate_id
+          ]
+        );
+        console.log(`✅ Cost Estimate ${invoice.estimate_id} updated with amount: ${totalAmount}`);
+      } catch (ceError) {
+        console.error("❌ Error updating Cost Estimate:", ceError);
+        // Don't fail the whole request, just log the error
+      }
+    }
+
+    // Build sync status message
+    let syncMessage = "Invoice updated successfully.";
+    if (poSynced && poIdsToUpdate.length > 0) {
+      syncMessage += ` ${poIdsToUpdate.length} PO(s) amount synced.`;
+    }
+    if (invoice.estimate_id) {
+      syncMessage += " Cost Estimate amount synced.";
+    }
+
     res.json({
       success: true,
-      message: "Invoice updated successfully"
+      message: syncMessage
     });
 
   } catch (error) {
