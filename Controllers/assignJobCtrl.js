@@ -70,7 +70,8 @@ export const createAssignJob = async (req, res) => {
           time_budget = ?,
           admin_status = ?,
           production_status = ?,
-          employee_status = ?
+          employee_status = ?,
+          updated_at = NOW()
         WHERE id = ?
         `,
         [
@@ -767,29 +768,29 @@ export const getJobsByEmployee = async (req, res) => {
         resultMap[key] = {
           assign_job: row.id
             ? {
-                id: row.id,
-                project_id: row.project_id,
-                job_ids: row.job_ids,
-                employee_id: row.employee_id,
-                production_id: row.production_id,
-                task_description: row.task_description,
-                time_budget: row.time_budget,
-                admin_status: row.admin_status,
-                production_status: row.production_status,
-                employee_status: row.employee_status,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-                pack_code: row.pack_code,
-              }
+              id: row.id,
+              project_id: row.project_id,
+              job_ids: row.job_ids,
+              employee_id: row.employee_id,
+              production_id: row.production_id,
+              task_description: row.task_description,
+              time_budget: row.time_budget,
+              admin_status: row.admin_status,
+              production_status: row.production_status,
+              employee_status: row.employee_status,
+              created_at: row.created_at,
+              updated_at: row.updated_at,
+              pack_code: row.pack_code,
+            }
             : null,
 
           employee_user: row.employee_user_id
             ? {
-                id: row.employee_user_id,
-                first_name: row.employee_first_name,
-                last_name: row.employee_last_name,
-                email: row.employee_email,
-              }
+              id: row.employee_user_id,
+              first_name: row.employee_first_name,
+              last_name: row.employee_last_name,
+              email: row.employee_email,
+            }
             : null,
 
           project: {
@@ -825,7 +826,7 @@ export const getJobsByEmployee = async (req, res) => {
           ? { id: row.flavour_id, name: row.flavour_name }
           : null,
 
-      
+
 
         pack_type: row.pack_type_id
           ? { id: row.pack_type_id, name: row.pack_type_name }
@@ -833,11 +834,11 @@ export const getJobsByEmployee = async (req, res) => {
 
         assigned_user: row.job_assigned_user_id
           ? {
-              id: row.job_assigned_user_id,
-              first_name: row.job_assigned_first_name,
-              last_name: row.job_assigned_last_name,
-              email: row.job_assigned_email,
-            }
+            id: row.job_assigned_user_id,
+            first_name: row.job_assigned_first_name,
+            last_name: row.job_assigned_last_name,
+            email: row.job_assigned_email,
+          }
           : null,
       });
     });
@@ -959,28 +960,28 @@ export const getJobsAllEmployee = async (req, res) => {
         resultMap[key] = {
           assign_job: row.id
             ? {
-                id: row.id,
-                project_id: row.project_id,
-                job_ids: row.job_ids,
-                employee_id: row.employee_id,
-                production_id: row.production_id,
-                task_description: row.task_description,
-                time_budget: row.time_budget,
-                admin_status: row.admin_status,
-                production_status: row.production_status,
-                employee_status: row.employee_status,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-              }
+              id: row.id,
+              project_id: row.project_id,
+              job_ids: row.job_ids,
+              employee_id: row.employee_id,
+              production_id: row.production_id,
+              task_description: row.task_description,
+              time_budget: row.time_budget,
+              admin_status: row.admin_status,
+              production_status: row.production_status,
+              employee_status: row.employee_status,
+              created_at: row.created_at,
+              updated_at: row.updated_at,
+            }
             : null,
 
           employee_user: row.employee_user_id
             ? {
-                id: row.employee_user_id,
-                first_name: row.employee_first_name,
-                last_name: row.employee_last_name,
-                email: row.employee_email,
-              }
+              id: row.employee_user_id,
+              first_name: row.employee_first_name,
+              last_name: row.employee_last_name,
+              email: row.employee_email,
+            }
             : null,
 
           project: {
@@ -1016,7 +1017,7 @@ export const getJobsAllEmployee = async (req, res) => {
           ? { id: row.flavour_id, name: row.flavour_name }
           : null,
 
-      
+
 
         pack_type: row.pack_type_id
           ? { id: row.pack_type_id, name: row.pack_type_name }
@@ -1024,11 +1025,11 @@ export const getJobsAllEmployee = async (req, res) => {
 
         assigned_user: row.job_assigned_user_id
           ? {
-              id: row.job_assigned_user_id,
-              first_name: row.job_assigned_first_name,
-              last_name: row.job_assigned_last_name,
-              email: row.job_assigned_email,
-            }
+            id: row.job_assigned_user_id,
+            first_name: row.job_assigned_first_name,
+            last_name: row.job_assigned_last_name,
+            email: row.job_assigned_email,
+          }
           : null,
       });
     });
@@ -1059,6 +1060,7 @@ export const getAllProductionAssignJobs = async (req, res) => {
         j.priority AS job_priority,
         j.pack_size,
         j.ean_barcode,
+        j.pack_code,
         j.project_id,
 
         -- project
@@ -1150,11 +1152,11 @@ export const getAllProductionAssignJobs = async (req, res) => {
 
           production_user: row.production_user_id
             ? {
-                id: row.production_user_id,
-                first_name: row.production_first_name,
-                last_name: row.production_last_name,
-                email: row.production_email,
-              }
+              id: row.production_user_id,
+              first_name: row.production_first_name,
+              last_name: row.production_last_name,
+              email: row.production_email,
+            }
             : null,
 
           project: {
@@ -1179,6 +1181,7 @@ export const getAllProductionAssignJobs = async (req, res) => {
         priority: row.job_priority,
         pack_size: row.pack_size,
         ean_barcode: row.ean_barcode,
+        pack_code: row.pack_code,
 
         brand: row.brand_id ? { id: row.brand_id, name: row.brand_name } : null,
 
@@ -1190,7 +1193,7 @@ export const getAllProductionAssignJobs = async (req, res) => {
           ? { id: row.flavour_id, name: row.flavour_name }
           : null,
 
-  
+
 
         pack_type: row.pack_type_id
           ? { id: row.pack_type_id, name: row.pack_type_name }
@@ -1320,11 +1323,11 @@ export const getJobsByProduction = async (req, res) => {
 
           production_user: row.production_user_id
             ? {
-                id: row.production_user_id,
-                first_name: row.production_first_name,
-                last_name: row.production_last_name,
-                email: row.production_email,
-              }
+              id: row.production_user_id,
+              first_name: row.production_first_name,
+              last_name: row.production_last_name,
+              email: row.production_email,
+            }
             : null,
 
           project: {
@@ -1361,7 +1364,7 @@ export const getJobsByProduction = async (req, res) => {
           ? { id: row.flavour_id, name: row.flavour_name }
           : null,
 
-       
+
 
         pack_type: row.pack_type_id
           ? { id: row.pack_type_id, name: row.pack_type_name }

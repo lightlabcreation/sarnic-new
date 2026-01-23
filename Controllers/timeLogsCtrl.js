@@ -494,7 +494,7 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
           aj.task_description
         ) AS task_description,
 
-        aj.created_at AS task_created_at,
+        COALESCE(aj.updated_at, aj.created_at) AS task_created_at,
         
         COALESCE(
           twl.time_budget_snapshot,
@@ -587,7 +587,7 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
         // Construct virtual log
         const virtualLog = {
           id: `pending_${latestAssignment.id}_${Date.now()}`, // unique ID for frontend key
-          date: latestAssignment.created_at, // Use assignment date
+          date: latestAssignment.updated_at || latestAssignment.created_at, // Use assignment date (updated or created)
           task_description: latestAssignment.task_description, // The NEW description
           time_budget: latestAssignment.time_budget,
 
@@ -622,7 +622,7 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
         assigned_employee_name: metaSource.assigned_employee_name || null,
         time_budget: metaSource.time_budget || "00:00:00",
         task_description: metaSource.task_description || null,
-        created_at: metaSource.created_at || null
+        created_at: metaSource.updated_at || metaSource.created_at || null
       };
 
       return res.json({
@@ -681,7 +681,7 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
           const assigneeName = latestAssign.employee_id ? latestAssign.user_name : latestAssign.production_user_name;
           const virtualLog = {
             id: `pending_${latestAssign.id}_${Date.now()}_${Math.random()}`,
-            date: latestAssign.created_at,
+            date: latestAssign.updated_at || latestAssign.created_at,
             task_description: latestAssign.task_description,
             time_budget: latestAssign.time_budget,
 

@@ -770,9 +770,9 @@ export const getInvoicepdfById = async (req, res) => {
 
         -- ESTIMATE INFO
         es.estimate_no AS ce_no,
-
-        -- ✅ PO INFO (FIX)
-        REPLACE(po.po_number, 'PO-', '') AS po_no
+        
+        -- ✅ PO INFO (FIX: FALLBACK TO ESTIMATE PO)
+        REPLACE(COALESCE(po.po_number, po_est.po_number), 'PO-', '') AS po_no
 
       FROM invoices i
 
@@ -789,9 +789,13 @@ export const getInvoicepdfById = async (req, res) => {
       LEFT JOIN estimates es
         ON es.id = i.estimate_id
 
-      -- ✅ IMPORTANT JOIN
+      -- ✅ DIRECT PO JOIN
       LEFT JOIN purchase_orders po
         ON po.id = i.purchase_order_id
+
+      -- ✅ FALLBACK PO JOIN (VIA ESTIMATE)
+      LEFT JOIN purchase_orders po_est
+        ON po_est.cost_estimation_id = i.estimate_id
 
       WHERE i.id = ?
     `, [id]);
@@ -1014,16 +1018,16 @@ export const updateInvoice = async (req, res) => {
     // 🔄 SYNC AMOUNT TO PURCHASE ORDER (if linked)
     let poIdsToUpdate = [];
     let poSynced = false;
-    
+
     console.log(`🔍 Invoice ${id} - PO ID: ${invoice.purchase_order_id}, Estimate ID: ${invoice.estimate_id}`);
     console.log(`💰 Invoice Total Amount: ${totalAmount}`);
-    
+
     // Case 1: Direct PO link in invoice
     if (invoice.purchase_order_id) {
       poIdsToUpdate.push(invoice.purchase_order_id);
       console.log(`✅ Found direct PO link: ${invoice.purchase_order_id}`);
     }
-    
+
     // Case 2: Find PO via Cost Estimate (always check this, even if direct link exists)
     if (invoice.estimate_id) {
       const [linkedPOs] = await pool.query(
@@ -1052,30 +1056,30 @@ export const updateInvoice = async (req, res) => {
             `SELECT id, po_amount FROM purchase_orders WHERE id = ?`,
             [poId]
           );
-          
+
           if (!poCheck) {
             console.error(`❌ PO ${poId} not found in database!`);
             continue;
           }
-          
+
           console.log(`📋 PO ${poId} exists. Current amount: ${poCheck.po_amount}, Updating to: ${totalAmount}`);
-          
+
           // Update PO
           await pool.query(
             `UPDATE purchase_orders SET po_amount = ? WHERE id = ?`,
             [totalAmount, poId]
           );
-          
+
           // Verify update
           const [[poVerify]] = await pool.query(
             `SELECT po_amount FROM purchase_orders WHERE id = ?`,
             [poId]
           );
-          
+
           // Compare amounts (handle float precision)
           const expectedAmount = parseFloat(totalAmount);
           const actualAmount = parseFloat(poVerify?.po_amount || 0);
-          
+
           if (poVerify && Math.abs(expectedAmount - actualAmount) < 0.01) {
             console.log(`✅ PO ${poId} successfully updated! New amount: ${poVerify.po_amount}`);
             poSynced = true;
