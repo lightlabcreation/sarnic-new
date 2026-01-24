@@ -45,15 +45,26 @@ export const createAssignJob = async (req, res) => {
 
     // -----------------------------
     // 1️⃣ Check existing assign job
-    // (project + same job_ids)
+    // (exact match of project, jobs, assignee, AND description)
     // -----------------------------
     const [existing] = await pool.query(
       `
       SELECT id FROM assign_jobs
-      WHERE project_id = ? AND job_ids = ?
+      WHERE project_id = ? 
+        AND job_ids = ? 
+        AND (employee_id = ? OR (employee_id IS NULL AND ? IS NULL))
+        AND (production_id = ? OR (production_id IS NULL AND ? IS NULL))
+        AND (task_description = ? OR (task_description IS NULL AND ? IS NULL))
+      ORDER BY created_at DESC
       LIMIT 1
       `,
-      [project_id, jobIdsString]
+      [
+        project_id,
+        jobIdsString,
+        employee_id || null, employee_id || null,
+        production_id || null, production_id || null,
+        task_description || null, task_description || null
+      ]
     );
 
     // -----------------------------
@@ -64,8 +75,6 @@ export const createAssignJob = async (req, res) => {
         `
         UPDATE assign_jobs
         SET
-          employee_id = ?,
-          production_id = ?,
           task_description = ?,
           time_budget = ?,
           admin_status = ?,
@@ -75,8 +84,6 @@ export const createAssignJob = async (req, res) => {
         WHERE id = ?
         `,
         [
-          employee_id || null,
-          production_id || null,
           task_description || null,
           time_budget || null,
           admin_status,
@@ -98,9 +105,11 @@ export const createAssignJob = async (req, res) => {
           time_budget,
           admin_status,
           production_status,
-          employee_status
+          employee_status,
+          created_at,
+          updated_at
         )
-        VALUES (?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?, NOW(), NOW())
         `,
         [
           project_id,
@@ -747,8 +756,10 @@ export const getJobsByEmployee = async (req, res) => {
         ON ju.id = j.assigned
 
       WHERE 
-        aj.employee_id = ?
-        OR j.assigned = ?
+        (aj.employee_id = ? OR j.assigned = ?)
+        AND (aj.id IS NULL OR aj.id IN (
+          SELECT MAX(id) FROM assign_jobs GROUP BY project_id, job_ids
+        ))
 
       ORDER BY 
         COALESCE(aj.created_at, j.created_at) DESC
@@ -941,7 +952,9 @@ export const getJobsAllEmployee = async (req, res) => {
       LEFT JOIN users ju
         ON ju.id = j.assigned
 
-     
+      WHERE (aj.id IS NULL OR aj.id IN (
+        SELECT MAX(id) FROM assign_jobs GROUP BY project_id, job_ids
+      ))
 
       ORDER BY 
         COALESCE(aj.created_at, j.created_at) DESC
@@ -1122,6 +1135,11 @@ export const getAllProductionAssignJobs = async (req, res) => {
       LEFT JOIN users u 
         ON aj.production_id = u.id
 
+      WHERE aj.id IN (
+        SELECT MAX(id) 
+        FROM assign_jobs 
+        GROUP BY project_id, job_ids
+      )
    
       ORDER BY aj.created_at DESC
       `
@@ -1292,6 +1310,11 @@ export const getJobsByProduction = async (req, res) => {
 
       WHERE aj.production_id = ?
       AND aj.employee_id IS NULL
+      AND aj.id IN (
+        SELECT MAX(id) 
+        FROM assign_jobs 
+        GROUP BY project_id, job_ids
+      )
 
       ORDER BY aj.created_at DESC
       `,
@@ -1452,6 +1475,9 @@ export const getInProgressJobsByProduction = async (req, res) => {
         aj.production_id = ?
         AND aj.employee_id IS NOT NULL
         AND j.job_status = 'in_progress'
+        AND aj.id IN (
+          SELECT MAX(id) FROM assign_jobs GROUP BY project_id, job_ids
+        )
 
       ORDER BY aj.created_at DESC
       `,

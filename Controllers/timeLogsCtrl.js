@@ -494,7 +494,7 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
           aj.task_description
         ) AS task_description,
 
-        COALESCE(aj.updated_at, aj.created_at) AS task_created_at,
+        aj.created_at AS task_created_at,
         
         COALESCE(
           twl.time_budget_snapshot,
@@ -587,7 +587,7 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
         // Construct virtual log
         const virtualLog = {
           id: `pending_${latestAssignment.id}_${Date.now()}`, // unique ID for frontend key
-          date: latestAssignment.updated_at || latestAssignment.created_at, // Use assignment date (updated or created)
+          date: latestAssignment.created_at, // Use assignment date
           task_description: latestAssignment.task_description, // The NEW description
           time_budget: latestAssignment.time_budget,
 
@@ -608,13 +608,19 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
       }
     }
 
+    // 🔥 OVERRIDE LOG DATE WITH ASSIGNMENT DATE (User request: show assignment date instead of log date)
+    const formattedInjectedRows = injectedRows.map(row => ({
+      ...row,
+      date: row.task_created_at || row.date
+    }));
+
     /* ----------------------------------------------------
        RESPONSE MAPPING
     ---------------------------------------------------- */
 
     if (userRole === "production" || userRole === "employee") {
       // Use latestAssignment for metadata if available, else fallback to rows
-      const metaSource = latestAssignment || injectedRows[0] || {};
+      const metaSource = latestAssignment || formattedInjectedRows[0] || {};
 
       const userObj = {
         [userRole === "production" ? "production_id" : "employee_id"]: employeeId,
@@ -622,13 +628,13 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
         assigned_employee_name: metaSource.assigned_employee_name || null,
         time_budget: metaSource.time_budget || "00:00:00",
         task_description: metaSource.task_description || null,
-        created_at: metaSource.updated_at || metaSource.created_at || null
+        created_at: metaSource.created_at || null
       };
 
       return res.json({
         success: true,
         [userRole]: userObj,
-        logs: injectedRows
+        logs: formattedInjectedRows
       });
     }
 
@@ -649,8 +655,6 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
           ?, REPLACE(REPLACE(aj.job_ids, '[', ''), ']', '')
         )
         -- We want the latest assignment per user/production
-        -- This simple query gets all; we'll filter for latest in JS or use a complex group-wise max query.
-        -- Given volume, JS filtering is acceptable.
         ORDER BY aj.created_at DESC
         `,
         [jobId]
@@ -681,7 +685,7 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
           const assigneeName = latestAssign.employee_id ? latestAssign.user_name : latestAssign.production_user_name;
           const virtualLog = {
             id: `pending_${latestAssign.id}_${Date.now()}_${Math.random()}`,
-            date: latestAssign.updated_at || latestAssign.created_at,
+            date: latestAssign.created_at,
             task_description: latestAssign.task_description,
             time_budget: latestAssign.time_budget,
 
@@ -697,20 +701,23 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
 
             is_pending: true,
             JobID: null,
-            assign_status: "assigned"
+            assign_status: "assigned",
+            task_created_at: latestAssign.created_at // important for date override
           };
           injectedRows.unshift(virtualLog);
         }
       });
 
+      // 🔥 APPLY DATE OVERRIDE (Assignment Date instead of Log Date)
+      const formattedInjectedRows = injectedRows.map(row => ({
+        ...row,
+        date: row.task_created_at || row.date
+      }));
+
+      // Grouping logic
       const productionsMap = {};
 
-      injectedRows.forEach((row) => {
-        // Grouping key: preference to production_id, else employee_id (fallback)
-        // actually existing logic grouped by production_id. 
-        // If an employee is working directly (no production?), we might drop them if we only use production_id.
-        // Let's stick to user's existing structure but handle the "unassigned" case better.
-
+      formattedInjectedRows.forEach((row) => {
         const prodId = row.production_id || `emp_direct_${row.employee_id}` || "unassigned";
 
         if (!productionsMap[prodId]) {
@@ -719,7 +726,7 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
             production_name: row.production_name || row.employee_name, // Fallback name
             time_budget: row.time_budget || "00:00:00",
             task_description: row.task_description || null,
-            task_created_at: row.task_created_at || null,
+            created_at: row.task_created_at || null, // renamed for frontend consistency
             logs: [],
           };
         }
@@ -734,7 +741,7 @@ export const getAllTimeLogsEmployeeWithTask = async (req, res) => {
       });
     }
 
-    return res.json({ success: true, data: injectedRows });
+    return res.json({ success: true, data: formattedInjectedRows });
 
   } catch (error) {
     console.error("Time log error:", error);
